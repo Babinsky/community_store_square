@@ -6,8 +6,10 @@ use Core;
 use Log;
 use Config;
 use Exception;
-use \Square\Charge;
-use Square\Error;
+use Square\SquareClient;
+use Square\Environment;
+use Square\Models;
+use Square\Exceptions\ApiException;
 
 use \Concrete\Package\CommunityStore\Src\CommunityStore\Payment\Method as StorePaymentMethod;
 use \Concrete\Package\CommunityStore\Src\CommunityStore\Utilities\Calculator as StoreCalculator;
@@ -93,72 +95,44 @@ class CommunityStoreSquarePaymentMethod extends StorePaymentMethod
         $customer = new StoreCustomer();
         $currency = Config::get('community_store_square.currency');
         $mode =  Config::get('community_store_square.mode');
-
+		
+		$client = null;
         if ($mode == 'sandbox') {
             $privateKey = Config::get('community_store_square.sandboxAccessToken');
             $locationKey = Config::get('community_store_square.sandboxLocation');
+			$client = new SquareClient([
+				'accessToken' => $privateKey,
+				'environment' => Environment::SANDBOX,
+			]);
         } else {
             $privateKey = Config::get('community_store_square.liveAccessToken');
             $locationKey = Config::get('community_store_square.liveLocation');
+			$client = new SquareClient([
+				'accessToken' => $privateKey,
+				'environment' => Environment::PRODUCTION,
+			]);
         }
+		
+		$paymentsApi = $client->getPaymentsApi();
+		$body_sourceId = $_POST['nonce'];
+		$body_idempotencyKey = uniqid();
+		$body_amountMoney = new Models\Money();
+		$body_amountMoney->setAmount(StoreCalculator::getGrandTotal()*100);
+		$body_amountMoney->setCurrency($currency);
+		$body = new Models\CreatePaymentRequest(
+			$body_sourceId,
+			$body_idempotencyKey,
+			$body_amountMoney
+		);
+		$body->setAutocomplete(true);
+		$apiResponse = $paymentsApi->createPayment($body);
 
-        $token = $_POST['squareToken'];
-		    $nonce = $_POST['nonce'];
-
-        // Alert for debugging purposes only
-        // Log::addEntry("Nonce: " . $nonce , t('Community Store Square'));
-
-        $genericError = false;
-    		if (is_null($nonce)) {
-    		  echo "Invalid card data";
-    		  http_response_code(422);
-    		  return;
-    		}
-    		$transaction_api = new TransactionApi();
-    		$request_body = array (
-    		  "card_nonce" => $nonce,
-    		  # Monetary amounts are specified in the smallest unit of the applicable currency.
-    		  # This amount is in cents. It's also hard-coded for $1.00, which isn't very useful.
-    		  "amount_money" => array (
-    			"amount" => StoreCalculator::getGrandTotal()*100,
-    			"currency" => $currency
-    		  ),
-    		  # Every payment you process with the SDK must have a unique idempotency key.
-    		  # If you're unsure whether a particular payment succeeded, you can reattempt
-    		  # it with the same idempotency key without worrying about double charging
-    		  # the buyer.
-    		  "idempotency_key" => uniqid()
-    		);
-
-  		try {
-        // Alert for debugging purposes only
-        // Log::addEntry("Init actual credit card payment", t('Community Store Square'));
-  		  $result = $transaction_api->charge($privateKey, $locationKey, $request_body);
-
-        // Alert for debugging purposes only
-        Log::addEntry('Square info.'."\n".'Result is:' . $result . "\n", t('Community Store Square'));
-
-        // credit card payment was successful - updating database - order record
-        return array('error'=>0, 'transactionReference'=>$result);
-  		} catch (\SquareConnect\ApiException $e) {
-        $respBody = $e->getResponseBody();
-        if (is_object($respBody)) {
-          $errTxt = '';
-          foreach($respBody->errors as $respError) {
-            $errTxt = $errTxt . $respError->detail;
-          }
-          $totalError = json_encode($respBody);
-          // Log error to backend (Reports - Logs)
-          Log::addEntry ("JSON from response body: ".$totalError, t('Community Store Square'));
-          // Display error to frontend
-          return array('error'=>1,'errorMessage'=> 'Payment Error: '.$errTxt);
-        } else {
-          // Log error to backend (Reports - Logs)
-          Log::addEntry("Something went wrong during the payment process:". $e, t('Community Store Square'));
-          // Display error to frontend
-          return array ('error'=>1,'errorMessage'=>'Something went wrong during the payment process!');
-        }
-  		}
+		if ($apiResponse->isSuccess()) {
+			$createPaymentResponse = $apiResponse->getResult();
+			return array('error'=>0, 'transactionReference'=>$createPaymentResponse->getPayment()->getId());
+		} else {
+			return array ('error'=>1,'errorMessage'=>$apiResponse->getErrors());
+		}
     }
 
     public function getPaymentMethodName(){
