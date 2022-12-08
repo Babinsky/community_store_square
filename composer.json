@@ -1,5 +1,5 @@
 {
-  "require": {
-    "square/connect": "*"
-  }
+    "require": {
+        "square/square": "24.0.0.20221116"
+    }
 }

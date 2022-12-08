@@ -2,119 +2,109 @@
   extract($vars);
 ?>
 
-<script type="text/javascript" src="https://js.squareup.com/v2/paymentform"></script>
-
+<?= $mode == 'live' ? '<script type="text/javascript" src="https://web.squarecdn.com/v1/square.js"></script>' : '<script type="text/javascript" src="https://sandbox.web.squarecdn.com/v1/square.js"></script>' ?>
 <script>
+	const appId = '<?= $publicAPIKey; ?>';
+	const locationId = '<?= $locationKey; ?>';
 
-   var sqPaymentForm = new SqPaymentForm({
+	async function initializeCard(payments) {
+		const card = await payments.card();
+		await card.attach('#card-container');
 
-      // Application ID is defined/found in the settings (Store - Settings - Payments)
-      applicationId: '<?= $publicAPIKey; ?>',
-      inputClass: 'sq-input',
-      inputStyles: [
-        {
-          fontSize: '15px'
-        }
-      ],
-      cardNumber: {
-        elementId: 'sq-card-number',
-        placeholder: "0000 0000 0000 0000"
-      },
-      cvv: {
-        elementId: 'sq-cvv',
-        placeholder: 'CVV'
-      },
-      expirationDate: {
-        elementId: 'sq-expiration-date',
-        placeholder: 'MM/YY'
-      },
-      postalCode: {
-        elementId: 'sq-postal-code',
-        placeholder: 'Postal Code'
-      },
-      callbacks: {
-        cardNonceResponseReceived: function(errors, nonce, cardData) {
-          if (errors) {
-            var errorDiv = document.getElementById('errors');
-            errorDiv.innerHTML = "";
-            errors.forEach(function(error) {
-              var p = document.createElement('p');
-              p.innerHTML = error.message;
-              errorDiv.appendChild(p);
-            });
-            errorDiv.style.display = "block";
-          } else {
-            // Alert for debugging purposes only
-            // alert('Nonce received! ' + nonce + ' ' + JSON.stringify(cardData));
+		return card;
+	}
 
-            // Assign the value of the nonce to a hidden form element
-            var nonceField = document.getElementById('card-nonce');
-            nonceField.value = nonce;
+	async function createPayment(token) {
+		var nonceField = document.getElementById('card-nonce');
+		nonceField.value = token;
+		document.getElementById('store-checkout-form-group-payment').submit();
+	}
 
-            // Submit the form
-            document.getElementById('store-checkout-form-group-payment').submit();
-          }
-        },
-        unsupportedBrowserDetected: function() {
-          // Alert the buyer that their browser is not supported
+	async function tokenize(paymentMethod) {
+		const tokenResult = await paymentMethod.tokenize();
+		if (tokenResult.status === 'OK') {
+			return tokenResult.token;
+		} else {
+			let errorMessage = `Tokenization failed with status: ${tokenResult.status}`;
+			if (tokenResult.errors) {
+				errorMessage += ` and errors: ${JSON.stringify(
+				  tokenResult.errors
+				)}`;
+			}
 
-        }
-      }
-      });
+			throw new Error(errorMessage);
+		}
+	}
 
+	// status is either SUCCESS or FAILURE;
+	function displayPaymentResults(status) {
+		const statusContainer = document.getElementById(
+			'payment-status-container'
+		);
+		if (status === 'SUCCESS') {
+			statusContainer.classList.remove('is-failure');
+			statusContainer.classList.add('is-success');
+		} else {
+			statusContainer.classList.remove('is-success');
+			statusContainer.classList.add('is-failure');
+		}
 
-  $(function() {
-    // Alert for debugging purposes only
-    // console.log('<?= $mode; ?>');
-    // console.log('<?= $publicAPIKey; ?>');
+		statusContainer.style.visibility = 'visible';
+	}
 
-  	$(".store-btn-complete-order").bind("click",function(event){
-      // Alert for debugging purposes only
-  		// console.log("Requesting nonce - validating credit card")
-  		event.preventDefault();
-          sqPaymentForm.requestCardNonce();
-  		return false;
-  	})
+	document.addEventListener('DOMContentLoaded', async function() {
+		if (!window.Square) {
+			throw new Error('Square.js failed to load properly');
+		}
 
- });
+		let payments;
+		try {
+			payments = window.Square.payments(appId, locationId);
+		} catch {
+			const statusContainer = document.getElementById(
+				'payment-status-container'
+			);
+			statusContainer.className = 'missing-credentials';
+			statusContainer.style.visibility = 'visible';
+			return;
+		}
 
+		let card;
+		try {
+			card = await initializeCard(payments);
+		} catch (e) {
+			console.error('Initializing Card failed', e);
+			return;
+		}
+
+		// Checkpoint 2.
+		async function handlePaymentMethodSubmission(event, paymentMethod) {
+			event.preventDefault();
+
+			try {
+				// disable the submit button as we await tokenization and make a payment request.
+				cardButton.disabled = true;
+				const token = await tokenize(paymentMethod);
+				const paymentResults = await createPayment(token);
+				displayPaymentResults('SUCCESS');
+
+				console.debug('Payment Success', paymentResults);
+			} catch (e) {
+				cardButton.disabled = false;
+				displayPaymentResults('FAILURE');
+				console.error(e.message);
+			}
+		}
+
+		const cardButton = $(".store-btn-complete-order").get(0);
+		cardButton.addEventListener('click', async function(event) {
+			await handlePaymentMethodSubmission(event, card);
+		});
+	});
 </script>
 
-<div class="store-credit-card-boxpanel panel panel-default">
-    <div class="panel-body">
-        <div style="display:none;" id="errors" class="store-payment-errors square-payment-errors">
-        </div>
-        <div class="row">
-            <div class="col-xs-12">
-                <div class="form-group">
-                    <label for="sq-card-number"><?= t('Credit Card Number');?></label>
-                    <div id="sq-card-number"></div>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-xs-7 col-md-7">
-                <div class="form-group">
-                    <label for="sq-expiration-date"><?= t('Expiration Date');?></label>
-                    <div id="sq-expiration-date"></div>
-                </div>
-            </div>
-            <div class="col-xs-5 col-md-5 pull-right">
-                <div class="form-group">
-                    <label for="sq-cvv"><?= t('CV Code');?></label>
-                    <div id="sq-cvv"></div>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-          <div class="col-xs-12">
-            <div class="form-group">
-              <label for="sq-postal-code" >Your Postal Code</label>
-              <div id="sq-postal-code"></div>
-            </div>
-          </div>
-        </div>
-    </div>
+<div class="form-group">
+	<form id="payment-form"><div id="card-container"></div></form>
+	<div id="payment-status-container"></div>
+	<input type="hidden" id="card-nonce" name="nonce">
 </div>
-<input type="hidden" id="card-nonce" name="nonce">
-<p></p>

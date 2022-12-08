@@ -12,7 +12,7 @@ class Controller extends Package
 {
     protected $pkgHandle = 'community_store_square';
     protected $appVersionRequired = '5.7.2';
-    protected $pkgVersion = '0.9.1';
+    protected $pkgVersion = '0.10.0';
 
     public function on_start()
     {
